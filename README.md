@@ -14,13 +14,17 @@ This project provides a fully automated way to:
 
 This repo supports multiple workflows:
 
-1. Manual Script Execution (Primary)
+1. Manual Script Execution
    - RDP into a Windows Server
    - Run a single PowerShell script
    - Script handles reboots automatically
 
-2. Future Enhancements
-   - EC2 User Data automation
+2. EC2 User Data Execution
+   - Paste [`userdata/dc_build.txt`](/Users/stevetractenberg/github/powershell-build-domain-controller/userdata/dc_build.txt) into EC2 User Data at launch
+   - User Data writes `C:\ADSetup\dc_script.ps1` and runs it automatically
+   - Same multi-reboot workflow, logging, and final shutdown behavior
+
+3. Future Enhancements
    - Terraform-based deployment (instance + Route53)
 
 ---
@@ -46,7 +50,14 @@ This repo supports multiple workflows:
 
 ## ⚙️ Setup Instructions
 
-### 1. Launch EC2 Instance
+Pick one of the following:
+
+1. Option A: Manual Script Execution (RDP + run script)
+2. Option B: EC2 User Data Execution (hands-off bootstrap)
+
+### Option A - Manual Script Execution
+
+#### 1. Launch EC2 Instance
 
 - Choose Windows Server AMI
 - Instance type:
@@ -55,7 +66,7 @@ This repo supports multiple workflows:
 
 ---
 
-### 2. RDP into Server
+#### 2. RDP into Server
 
 - Connect as Administrator
 - Copy the script to the desktop (e.g. dc_script.ps1)
@@ -63,13 +74,13 @@ This repo supports multiple workflows:
 
 ---
 
-### 3. Run Script
+#### 3. Run Script
 
     .\dc_script.ps1
 
 ---
 
-### 4. Script Behavior
+#### 4. Script Behavior
 
 | Step | Action |
 |------|--------|
@@ -79,6 +90,32 @@ This repo supports multiple workflows:
 | 3 | Install AD CS |
 | 4 | Enable LDAPS |
 | 5 | ** Shutdown when complete ** |
+
+---
+
+### Option B - EC2 User Data Execution
+
+#### 1. Launch EC2 Instance with User Data
+
+- Choose Windows Server AMI
+- Use the same instance sizing guidance as Option A
+- In **Advanced details -> User data**, paste the contents of [`userdata/dc_build.txt`](/Users/stevetractenberg/github/powershell-build-domain-controller/userdata/dc_build.txt)
+
+#### 2. Customize Config Before Launch
+
+- Edit the `$Config` block inside User Data before launching:
+  - `ServerName`
+  - `DomainName`
+  - `NetBIOSName`
+  - `DSRMPassword`
+  - `CACommonName`
+
+#### 3. Bootstrapping Behavior
+
+- On first boot, User Data creates `C:\ADSetup\dc_script.ps1`
+- It runs the script with `-ExecutionPolicy Bypass`
+- Scheduled task continuation handles post-reboot steps until completion
+- Final state is the same as manual mode: logs written and instance shuts down
 
 ---
 

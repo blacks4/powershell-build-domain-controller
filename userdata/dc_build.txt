@@ -1,0 +1,266 @@
+<powershell>
+
+# -------------------------------
+# BOOTSTRAP
+# -------------------------------
+$ScriptDir  = "C:\ADSetup"
+$ScriptPath = "$ScriptDir\dc_script.ps1"
+
+if (-not (Test-Path $ScriptDir)) {
+    New-Item -ItemType Directory -Path $ScriptDir | Out-Null
+}
+
+# -------------------------------
+# WRITE FULL SCRIPT
+# -------------------------------
+@'
+#Requires -RunAsAdministrator
+#Requires -Version 5.1
+
+$ErrorActionPreference = "Stop"
+$ProgressPreference    = "SilentlyContinue"
+
+# ---------------------------------------------------------------------------
+# CONFIGURATION (NO PROMPTS)
+# ---------------------------------------------------------------------------
+
+$Config = @{
+    ServerName   = "dc1"
+    DomainName   = "domain.com"
+    NetBIOSName  = "DOMAIN"
+    DSRMPassword = "ChangeThisPassword123!"
+    CACommonName = "Domain Root CA"
+
+    DomainMode   = "Win2016"
+    ForestMode   = "Win2016"
+}
+
+# ---------------------------------------------------------------------------
+# CONSTANTS
+# ---------------------------------------------------------------------------
+
+$StateDir   = "C:\ADSetup"
+$StateFile  = "$StateDir\state.json"
+$LogFile    = "$StateDir\setup.log"
+$TaskName   = "ADDomainSetup-Continue"
+$ScriptPath = $PSCommandPath
+
+# ---------------------------------------------------------------------------
+# LOGGING
+# ---------------------------------------------------------------------------
+
+function Write-Log {
+    param([string]$Message, [string]$Level = "INFO")
+
+    $ts   = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$ts] [$Level] $Message"
+
+    Add-Content -Path $LogFile -Value $line -ErrorAction SilentlyContinue
+    Write-Output $line
+}
+
+function Measure-Step {
+    param([string]$Name, [scriptblock]$Script)
+
+    $start = Get-Date
+    Write-Log "START: $Name" "STEP"
+
+    & $Script
+
+    $end = Get-Date
+    $duration = ($end - $start).TotalSeconds
+    Write-Log "END: $Name (Duration: $([math]::Round($duration,2)) sec)" "OK"
+}
+
+# ---------------------------------------------------------------------------
+# ERROR HANDLER
+# ---------------------------------------------------------------------------
+
+trap {
+    Write-Log "ERROR: $($_.Exception.Message)" "ERROR"
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# STATE FUNCTIONS
+# ---------------------------------------------------------------------------
+
+function Save-State {
+    param($State)
+
+    if (-not (Test-Path $StateDir)) {
+        New-Item -ItemType Directory -Path $StateDir | Out-Null
+    }
+
+    $enc = $State.DSRMPasswordSecure | ConvertFrom-SecureString -Key $State.AESKey
+
+    @{
+        ServerName       = $State.ServerName
+        DomainName       = $State.DomainName
+        NetBIOSName      = $State.NetBIOSName
+        DSRMEncrypted    = $enc
+        AESKey           = ($State.AESKey -join ",")
+        CACommonName     = $State.CACommonName
+        DomainMode       = $State.DomainMode
+        ForestMode       = $State.ForestMode
+        ScriptStartTime  = $State.ScriptStartTime.ToString("o")
+    } | ConvertTo-Json | Set-Content $StateFile
+}
+
+function Load-State {
+    if (-not (Test-Path $StateFile)) { return $null }
+
+    $j = Get-Content $StateFile -Raw | ConvertFrom-Json
+    $key = $j.AESKey -split "," | ForEach-Object { [byte]$_ }
+
+    return @{
+        ServerName         = $j.ServerName
+        DomainName         = $j.DomainName
+        NetBIOSName        = $j.NetBIOSName
+        DSRMPasswordSecure = ($j.DSRMEncrypted | ConvertTo-SecureString -Key $key)
+        CACommonName       = $j.CACommonName
+        DomainMode         = $j.DomainMode
+        ForestMode         = $j.ForestMode
+        ScriptStartTime    = [datetime]::Parse($j.ScriptStartTime)
+    }
+}
+
+# ---------------------------------------------------------------------------
+# TASK FUNCTIONS
+# ---------------------------------------------------------------------------
+
+function Register-Task {
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+        -Argument "-ExecutionPolicy Bypass -File `"$ScriptPath`""
+
+    Register-ScheduledTask -TaskName $TaskName `
+        -Action $action `
+        -Trigger (New-ScheduledTaskTrigger -AtStartup) `
+        -Principal (New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest) `
+        -Force | Out-Null
+}
+
+function Remove-Task {
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------------
+# INIT
+# ---------------------------------------------------------------------------
+
+if (-not (Test-Path $StateDir)) {
+    New-Item -ItemType Directory -Path $StateDir | Out-Null
+}
+
+$saved = Load-State
+
+if ($saved) {
+    $R = $saved
+    Write-Log "SCRIPT RESUMED"
+}
+else {
+    $start = Get-Date
+    Write-Log "SCRIPT STARTED at $start"
+
+    $pwd = ConvertTo-SecureString $Config.DSRMPassword -AsPlainText -Force
+
+    $key = New-Object byte[] 32
+    ([System.Security.Cryptography.RandomNumberGenerator]::Create()).GetBytes($key)
+
+    $R = @{
+        ServerName         = $Config.ServerName
+        DomainName         = $Config.DomainName
+        NetBIOSName        = $Config.NetBIOSName
+        DSRMPasswordSecure = $pwd
+        AESKey             = $key
+        CACommonName       = $Config.CACommonName
+        DomainMode         = $Config.DomainMode
+        ForestMode         = $Config.ForestMode
+        ScriptStartTime    = $start
+    }
+
+    Save-State $R
+    Register-Task
+}
+
+# ---------------------------------------------------------------------------
+# RENAME
+# ---------------------------------------------------------------------------
+
+if ($env:COMPUTERNAME -ne $R.ServerName) {
+    Rename-Computer -NewName $R.ServerName -Force
+    Restart-Computer -Force
+    exit
+}
+
+# ---------------------------------------------------------------------------
+# PROMOTE
+# ---------------------------------------------------------------------------
+
+$cs = Get-CimInstance Win32_ComputerSystem
+
+if ($cs.DomainRole -lt 4) {
+
+    Measure-Step "Install AD DS" {
+        Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
+    }
+
+    Measure-Step "Promote to DC" {
+        Install-ADDSForest `
+            -DomainName $R.DomainName `
+            -DomainNetbiosName $R.NetBIOSName `
+            -SafeModeAdministratorPassword $R.DSRMPasswordSecure `
+            -InstallDns `
+            -Force `
+            -NoRebootOnCompletion:$false
+    }
+
+    exit
+}
+
+# ---------------------------------------------------------------------------
+# AD CS
+# ---------------------------------------------------------------------------
+
+if (-not (Get-WindowsFeature ADCS-Cert-Authority).Installed) {
+    Install-WindowsFeature ADCS-Cert-Authority -IncludeManagementTools
+}
+
+if (-not (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\$($R.CACommonName)")) {
+    Install-AdcsCertificationAuthority `
+        -CAType EnterpriseRootCA `
+        -CACommonName $R.CACommonName `
+        -Force
+}
+
+# ---------------------------------------------------------------------------
+# LDAPS
+# ---------------------------------------------------------------------------
+
+certutil -pulse | Out-Null
+
+# ---------------------------------------------------------------------------
+# COMPLETE
+# ---------------------------------------------------------------------------
+
+Remove-Task
+Remove-Item $StateFile -Force -ErrorAction SilentlyContinue
+
+$end = Get-Date
+$dur = ($end - $R.ScriptStartTime)
+
+Write-Log "SCRIPT COMPLETE in $([math]::Round($dur.TotalMinutes,2)) minutes"
+
+Start-Sleep 10
+Stop-Computer -Force
+
+'@ | Set-Content -Path $ScriptPath -Encoding UTF8
+
+# -------------------------------
+# RUN SCRIPT FIRST TIME
+# -------------------------------
+Start-Process powershell.exe `
+    -ArgumentList "-ExecutionPolicy Bypass -File `"$ScriptPath`"" `
+    -Wait
+
+</powershell>
