@@ -1,0 +1,18 @@
+vpc_id                 = "vpc-1234567890"
+subnet_id              = "subnet-9876543"
+instance_type          = "m5.xlarge"
+key_pair_name          = "my_key_pair"
+windows_server_version = "2022" # NOTE: 2022 is much faster to build compared to 2025!
+vault_ip_cidr          = "12.34.56.78/32"
+
+server_name    = "dc3"
+domain_name    = "domain.com"
+netbios_name   = "DOMAIN"
+dsrm_password  = "ReplaceThisPassword123!"
+ca_common_name = "Domain Root CA"
+
+#additional_allowed_rdp_cidr_blocks = [""]
+
+create_route53_record = true
+route53_zone_name     = "domain.com"
+route53_private_zone  = false
