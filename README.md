@@ -77,7 +77,7 @@ This repo supports multiple workflows:
 | 2 | Promote to Domain Controller (reboot) |
 | 3 | Install AD CS |
 | 4 | Enable LDAPS |
-| 5 | Shutdown when complete |
+| 5 | ** Shutdown when complete ** |
 
 ---
 
@@ -171,6 +171,5 @@ Retrieve credentials:
 
 ## 🏁 Notes
 
-- AD CS must be installed AFTER domain promotion
 - Use DN for static roles if search config is unreliable
 - Logs are your single source of truth for troubleshooting
