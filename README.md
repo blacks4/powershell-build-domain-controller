@@ -225,8 +225,8 @@ If something fails, the log file is all you need.
 
 | Instance Type | Time |
 |---------------|------|
-| t3.large | ~30–40 minutes |
-| m5.large | ~15–25 minutes |
+| t3.large | ~25-30 minutes |
+| m5.large | ~10-15 minutes |
 
 Observed Terraform build times on `m5.xlarge`:
 
