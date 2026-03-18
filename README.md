@@ -59,6 +59,7 @@ This repo supports multiple workflows:
 
 - Connect as Administrator
 - Copy the script to the desktop (e.g. dc_script.ps1)
+- Add variable values to lines 12-16
 
 ---
 

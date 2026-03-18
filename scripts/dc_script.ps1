@@ -10,10 +10,10 @@ $ProgressPreference    = "SilentlyContinue"
 
 $Config = @{
     ServerName   = "dc1"
-    DomainName   = $null
-    NetBIOSName  = $null
-    DSRMPassword = $null
-    CACommonName = $null
+    DomainName   = ""
+    NetBIOSName  = ""
+    DSRMPassword = ""
+    CACommonName = ""
 
     DatabasePath = $null
     LogPath      = $null
